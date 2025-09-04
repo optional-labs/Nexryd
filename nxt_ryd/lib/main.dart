@@ -25,6 +25,7 @@ class MyApp extends StatelessWidget {
       ],
       child: MaterialApp(
         title: 'NxtRyd',
+        debugShowCheckedModeBanner: false,
         theme: ThemeData(
           primarySwatch: Colors.blue,
           visualDensity: VisualDensity.adaptivePlatformDensity,

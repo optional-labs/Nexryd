@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../models/product.dart';
+import '../../helpers/database_helper.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -11,63 +12,145 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final List<Product> _products = [
-    Product(
-      id: '1',
-      name: 'Car Air Freshener',
-      price: 299.0,
-      image: '🌸',
-      description: 'Premium car air freshener',
-    ),
-    Product(
-      id: '2',
-      name: 'Phone Holder',
-      price: 599.0,
-      image: '📱',
-      description: 'Universal phone holder for cars',
-    ),
-    Product(
-      id: '3',
-      name: 'Car Charger',
-      price: 799.0,
-      image: '🔌',
-      description: 'Fast charging car adapter',
-    ),
-    Product(
-      id: '4',
-      name: 'Seat Covers',
-      price: 1299.0,
-      image: '🪑',
-      description: 'Premium leather seat covers',
-    ),
-    Product(
-      id: '5',
-      name: 'Dashboard Camera',
-      price: 2999.0,
-      image: '📹',
-      description: 'HD dashboard camera with night vision',
-    ),
-    Product(
-      id: '6',
-      name: 'Car Vacuum',
-      price: 1899.0,
-      image: '🧹',
-      description: 'Portable car vacuum cleaner',
-    ),
-  ];
+  List<Product> _products = [];
+  List<Product> _cartItems = [];
+  bool _isLoading = true;
 
-  final List<String> _cartItems = [];
+  @override
+  void initState() {
+    super.initState();
+    _loadProducts();
+    _loadCartItems();
+  }
 
-  void _addToCart(Product product) {
-    setState(() {
-      _cartItems.add(product.id);
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${product.name} added to cart'),
-        backgroundColor: Colors.green,
-        duration: const Duration(seconds: 1),
-      ),
+  Future<void> _loadProducts() async {
+    try {
+      final dbHelper = DatabaseHelper();
+      final products = await dbHelper.getProducts();
+      setState(() {
+        _products = products;
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _loadCartItems() async {
+    try {
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      final dbHelper = DatabaseHelper();
+      final cartData = await dbHelper.getCartItems(authProvider.currentUser);
+      
+      final cartProducts = <Product>[];
+      for (var item in cartData) {
+        cartProducts.add(Product(
+          id: item['product_id'],
+          name: item['name'],
+          price: item['price'],
+          image: item['image'],
+          description: item['description'],
+        ));
+      }
+      
+      setState(() {
+        _cartItems = cartProducts;
+      });
+    } catch (e) {
+      // Handle error
+    }
+  }
+
+  Future<void> _addToCart(Product product) async {
+    try {
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      final dbHelper = DatabaseHelper();
+      
+      await dbHelper.addToCart(authProvider.currentUser, product.id);
+      await _loadCartItems(); // Refresh cart
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${product.name} added to cart'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 1),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to add item to cart'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  void _showCartDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Shopping Cart'),
+          content: SizedBox(
+            width: double.maxFinite,
+            height: MediaQuery.of(context).size.height * 0.4,
+            child: _cartItems.isEmpty
+                ? const Center(child: Text('Your cart is empty'))
+                : ListView.builder(
+                    itemCount: _cartItems.length,
+                    itemBuilder: (context, index) {
+                      final product = _cartItems[index];
+                      return ListTile(
+                        leading: Text(product.image, style: const TextStyle(fontSize: 24)),
+                        title: Text(product.name),
+                        subtitle: Text('₹${product.price.toInt()}'),
+                        trailing: IconButton(
+                           icon: const Icon(Icons.remove_circle, color: Colors.red),
+                           onPressed: () async {
+                             try {
+                               final authProvider = Provider.of<AuthProvider>(context, listen: false);
+                               final dbHelper = DatabaseHelper();
+                               await dbHelper.removeFromCart(authProvider.currentUser, product.id);
+                               await _loadCartItems();
+                               Navigator.of(context).pop();
+                               _showCartDialog();
+                             } catch (e) {
+                               // Handle error
+                             }
+                           },
+                         ),
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+            if (_cartItems.isNotEmpty)
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Checkout functionality coming soon!'),
+                      backgroundColor: Colors.blue,
+                    ),
+                  );
+                },
+                child: const Text('Checkout'),
+              ),
+          ],
+        );
+      },
     );
   }
 
@@ -94,13 +177,7 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               IconButton(
                 icon: const Icon(Icons.shopping_cart),
-                onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Cart has ${_cartItems.length} items'),
-                    ),
-                  );
-                },
+                onPressed: _showCartDialog,
               ),
               if (_cartItems.isNotEmpty)
                 Positioned(
@@ -218,96 +295,108 @@ class _HomeScreenState extends State<HomeScreen> {
           
           // Products Grid
           Expanded(
-            child: GridView.builder(
-              padding: const EdgeInsets.all(16),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                childAspectRatio: 0.8,
-                crossAxisSpacing: 16,
-                mainAxisSpacing: 16,
-              ),
-              itemCount: _products.length,
-              itemBuilder: (context, index) {
-                final product = _products[index];
-                return Card(
-                  elevation: 4,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+            child: _isLoading
+                ? const Center(
+                    child: CircularProgressIndicator(),
+                  )
+                : LayoutBuilder(
+                    builder: (context, constraints) {
+                      final screenWidth = MediaQuery.of(context).size.width;
+                      final crossAxisCount = screenWidth < 600 ? 2 : screenWidth < 900 ? 3 : 4;
+                      final childAspectRatio = screenWidth < 600 ? 0.75 : 0.8;
+                      
+                      return GridView.builder(
+                  padding: EdgeInsets.all(screenWidth < 600 ? 12 : 16),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: crossAxisCount,
+                    childAspectRatio: childAspectRatio,
+                    crossAxisSpacing: screenWidth < 600 ? 12 : 16,
+                    mainAxisSpacing: screenWidth < 600 ? 12 : 16,
                   ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Product Image (Emoji)
-                        Center(
-                          child: Text(
-                            product.image,
-                            style: const TextStyle(fontSize: 40),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        
-                        // Product Name
-                        Text(
-                          product.name,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 4),
-                        
-                        // Product Description
-                        Text(
-                          product.description,
-                          style: TextStyle(
-                            color: Colors.grey[600],
-                            fontSize: 12,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const Spacer(),
-                        
-                        // Price and Add to Cart
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  itemCount: _products.length,
+                  itemBuilder: (context, index) {
+                    final product = _products[index];
+                    return Card(
+                      elevation: 4,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              '₹${product.price.toInt()}',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                                color: Colors.blue,
+                            // Product Image (Emoji)
+                            Center(
+                              child: Text(
+                                product.image,
+                                style: const TextStyle(fontSize: 40),
                               ),
                             ),
-                            ElevatedButton(
-                              onPressed: () => _addToCart(product),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.blue,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 4,
+                            const SizedBox(height: 8),
+                            
+                            // Product Name
+                            Text(
+                              product.name,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 4),
+                            
+                            // Product Description
+                            Text(
+                              product.description,
+                              style: TextStyle(
+                                color: Colors.grey[600],
+                                fontSize: 12,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const Spacer(),
+                            
+                            // Price and Add to Cart
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  '₹${product.price.toInt()}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                    color: Colors.blue,
+                                  ),
                                 ),
-                                minimumSize: const Size(60, 30),
-                              ),
-                              child: const Text(
-                                'Add',
-                                style: TextStyle(fontSize: 12),
-                              ),
+                                ElevatedButton(
+                                  onPressed: () => _addToCart(product),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.blue,
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    minimumSize: const Size(60, 30),
+                                  ),
+                                  child: const Text(
+                                    'Add',
+                                    style: TextStyle(fontSize: 12),
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
-                      ],
-                    ),
-                  ),
+                      ),
+                    );
+                  },
                 );
-              },
-            ),
+                   },
+                 ),
           ),
         ],
       ),
